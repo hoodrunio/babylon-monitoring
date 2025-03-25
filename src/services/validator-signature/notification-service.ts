@@ -11,16 +11,47 @@ import { ValidatorAlertState } from './types';
  */
 export class NotificationService {
   private alertStates: Map<string, ValidatorAlertState> = new Map();
+  private trackedValidators: Set<string> = new Set();
 
   constructor(
     private readonly network: Network,
     private readonly options: MonitoringServiceOptions,
-  ) {}
+  ) {
+    // Convert tracked validators to Set (for faster search)
+    if (options.trackedAddresses && options.trackedAddresses.length > 0) {
+      this.trackedValidators = new Set(options.trackedAddresses);
+      logger.info({
+        trackedAddresses: Array.from(this.trackedValidators),
+        count: this.trackedValidators.size
+      }, `Tracking specific validators for ${network}`);
+    } else {
+      logger.info(`No specific validators tracked, will monitor all validators for ${network}`);
+    }
+  }
+
+  /**
+   * Checks if a validator is being tracked
+   * If no specific validators are tracked, all validators are considered tracked
+   */
+  private isTrackedValidator(validatorAddress: string): boolean {
+    // If the tracked validator list is empty, track all validators
+    if (this.trackedValidators.size === 0) {
+      return true;
+    }
+    
+    // Return true only for tracked validators
+    return this.trackedValidators.has(validatorAddress);
+  }
 
   /**
    * Checks signature thresholds and sends alerts if necessary
    */
   async checkSignatureThresholds(stats: ValidatorSignatureStats): Promise<void> {
+    // If the validator is not being tracked, do not send a notification
+    if (!this.isTrackedValidator(stats.validatorAddress)) {
+      return;
+    }
+    
     await this.checkSignatureRateThreshold(stats);
     await this.checkConsecutiveMissedBlocks(stats);
   }
@@ -147,10 +178,15 @@ export class NotificationService {
   }
 
   /**
-   * Validator jailed bildirimini gönderir
+   * Sends a validator jailed alert
    */
   async sendValidatorJailedAlert(validatorAddress: string, moniker: string): Promise<void> {
-    const message = `Validator ${moniker} (${validatorAddress}) jailed durumuna geçti`;
+    // If the validator is not being tracked, do not send a notification
+    if (!this.isTrackedValidator(validatorAddress)) {
+      return;
+    }
+    
+    const message = `Validator ${moniker} (${validatorAddress}) has been jailed`;
 
     const alertPayload: AlertPayload = {
       title: 'Validator Jailed',
@@ -170,10 +206,15 @@ export class NotificationService {
   }
 
   /**
-   * Validator unjailed bildirimini gönderir
+   * Sends a validator unjailed alert
    */
   async sendValidatorUnjailedAlert(validatorAddress: string, moniker: string): Promise<void> {
-    const message = `Validator ${moniker} (${validatorAddress}) jailed durumundan çıktı`;
+    // If the validator is not being tracked, do not send a notification
+    if (!this.isTrackedValidator(validatorAddress)) {
+      return;
+    }
+    
+    const message = `Validator ${moniker} (${validatorAddress}) has been unjailed`;
 
     const alertPayload: AlertPayload = {
       title: 'Validator Unjailed',
@@ -193,10 +234,15 @@ export class NotificationService {
   }
 
   /**
-   * Validator inaktif (unbonded veya unbonding) bildirimini gönderir
+   * Sends a validator inactive (unbonded or unbonding) alert
    */
   async sendValidatorInactiveAlert(validatorAddress: string, moniker: string, status: string): Promise<void> {
-    const message = `Validator ${moniker} (${validatorAddress}) inaktif duruma geçti: ${status}`;
+    // If the validator is not being tracked, do not send a notification
+    if (!this.isTrackedValidator(validatorAddress)) {
+      return;
+    }
+    
+    const message = `Validator ${moniker} (${validatorAddress}) has become inactive: ${status}`;
 
     const alertPayload: AlertPayload = {
       title: 'Validator Inactive',
@@ -217,10 +263,15 @@ export class NotificationService {
   }
 
   /**
-   * Validator aktif (bonded) bildirimini gönderir
+   * Sends a validator active (bonded) alert
    */
   async sendValidatorActiveAlert(validatorAddress: string, moniker: string): Promise<void> {
-    const message = `Validator ${moniker} (${validatorAddress}) aktif duruma geçti`;
+    // If the validator is not being tracked, do not send a notification
+    if (!this.isTrackedValidator(validatorAddress)) {
+      return;
+    }
+    
+    const message = `Validator ${moniker} (${validatorAddress}) has become active`;
 
     const alertPayload: AlertPayload = {
       title: 'Validator Active',
@@ -265,4 +316,4 @@ export class NotificationService {
     this.alertStates.clear();
     logger.debug('Validator alert states cleared');
   }
-} 
+}

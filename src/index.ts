@@ -85,7 +85,7 @@ async function initializeNetworkServices(network: Network): Promise<void> {
         enabled: config.validatorSignatureMonitoringEnabled,
         network,
         trackedAddresses: config.trackedValidators,
-        blockThreshold: config.validatorSignatureThreshold
+        validatorSignatureThreshold: config.validatorSignatureThreshold
       });
       services.push(validatorSignatureService);
       logger.info(`${network} network ValidatorSignatureService started`);
