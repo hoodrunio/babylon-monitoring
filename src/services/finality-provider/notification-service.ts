@@ -63,7 +63,26 @@ export class NotificationService {
     else if (currentRate >= blockThreshold && alertState.lastAlertedSignatureRate < blockThreshold && !alertState.isRecovering) {
       await this.sendSignatureRateRecoveringAlert(stats);
       alertState.isRecovering = true;
+      
+      // Don't reset lastAlertedSignatureRate here, we need to keep track of previous status
+      // We'll set it to a value that won't trigger new alerts until rate drops again
       alertState.lastAlertedSignatureRate = currentRate;
+    }
+    // If provider is already in recovery state and continues to perform well
+    else if (currentRate >= blockThreshold && alertState.isRecovering) {
+      // After some time (e.g., 5 percentage points increase from recovery) reset recovery state
+      // so provider can go through the normal alert cycle again if needed
+      if (currentRate - alertState.lastAlertedSignatureRate >= 5) {
+        logger.debug({
+          fpBtcPkHex: stats.fpBtcPkHex,
+          moniker: stats.moniker,
+          currentRate: currentRate,
+          lastAlertedRate: alertState.lastAlertedSignatureRate
+        }, 'Resetting recovery state after sustained improvement');
+        
+        alertState.isRecovering = false;
+        alertState.lastAlertedSignatureRate = 100; // Reset to default
+      }
     }
   }
 
@@ -79,10 +98,24 @@ export class NotificationService {
                          !alertState.lastCriticalAlertTime ||
                          ((now.getTime() - alertState.lastCriticalAlertTime.getTime()) > 3600000); // 1 hour
 
-    if (canSendAlert) {
+    if (canSendAlert && recentMissed >= 3) {
       await this.sendRecentMissedBlocksAlert(stats, recentMissed);
       alertState.sentMissedBlockAlert = true;
       alertState.lastCriticalAlertTime = now;
+    } else if (alertState.sentMissedBlockAlert && recentMissed === 0) {
+      // Provider was missing blocks but now is signing consecutively
+      // Check if there are recent missed blocks within the last few blocks
+      const recentSigningCount = 5; // We want at least 5 consecutive signed blocks
+      
+      // If missedBlockHeights is empty or all missed blocks are outside our recent window
+      // Consider more recent blocks (higher block numbers) first
+      const noRecentMissedBlocks = stats.missedBlockHeights.length === 0 || 
+                                   !this.hasRecentlyMissedBlocks(stats.missedBlockHeights, recentSigningCount);
+      
+      if (noRecentMissedBlocks) {
+        await this.sendConsecutiveSigningRecoveryAlert(stats);
+        alertState.sentMissedBlockAlert = false;
+      }
     } else {
       logger.debug({
         fpBtcPkHex: stats.fpBtcPkHex,
@@ -90,6 +123,46 @@ export class NotificationService {
         recentMissed
       }, 'There are missed signatures in the recent blocks, but not enough time has passed since the previous notification');
     }
+  }
+
+  /**
+   * Checks if the provider has missed blocks recently
+   * @param missedBlockHeights Array of block heights where signatures were missed
+   * @param recentBlockCount Number of recent blocks to check
+   * @returns boolean True if there are missed blocks in the recent window
+   */
+  private hasRecentlyMissedBlocks(missedBlockHeights: number[], recentBlockCount: number): boolean {
+    if (missedBlockHeights.length === 0) {
+      return false; // No missed blocks at all
+    }
+    
+    // Sort the heights in descending order (more recent blocks first)
+    const sortedHeights = [...missedBlockHeights].sort((a, b) => b - a);
+    
+    // Get the most recent block height from the missed blocks
+    const mostRecentMissedHeight = sortedHeights[0];
+    
+    // We need recentBlockCount consecutive blocks without misses
+    // So if the most recent missed block is within the last recentBlockCount blocks,
+    // we haven't had enough consecutive signed blocks yet
+    
+    // Since we don't have the current block height in the stats,
+    // we'll use a simple approach - if the most recent missed block is less than
+    // recentBlockCount blocks away from another missed block, we're not in a recovery state yet
+    
+    // If there's only one missed block, we can consider it as having recovered
+    // after that single block (since we already know recentMissed is 0)
+    if (sortedHeights.length === 1) {
+      return false; // Only one missed block, and it's not recent (recentMissed is 0)
+    }
+    
+    // Check if the gap between the most recent missed block and the second most recent
+    // is at least recentBlockCount (this means recentBlockCount consecutive blocks were signed)
+    const secondMostRecentMissedHeight = sortedHeights[1];
+    const consecutiveSignedBlocks = mostRecentMissedHeight - secondMostRecentMissedHeight - 1;
+    
+    // If we have at least recentBlockCount consecutive signed blocks, then we've recovered
+    return consecutiveSignedBlocks < recentBlockCount;
   }
 
   /**
@@ -194,6 +267,40 @@ export class NotificationService {
       moniker: stats.moniker,
       recentMissed
     }, 'Recent block miss notification sent');
+  }
+
+  /**
+   * Sends consecutive signing recovery notification
+   */
+  private async sendConsecutiveSigningRecoveryAlert(stats: FinalityProviderSignatureStats): Promise<void> {
+    const providerName = stats.moniker || stats.fpBtcPkHex.substring(0, 8);
+    const providerLink = `https://testnet.babylon.hoodscan.io/staking/providers/${stats.fpBtcPkHex}`;
+    
+    const alert: AlertPayload = {
+      title: `🔄 Block Signing Recovered | ${providerName}`,
+      message: `Finality Provider has recovered and is now signing blocks consecutively.\n\nProvider Details:\n• Name: ${providerName}\n• Owner: ${stats.ownerAddress}\n• Status: ${stats.jailed ? '🔒 Jailed' : (stats.isActive ? '✅ Active' : '❌ Inactive')}\n• Explorer: [View on Hoodscan](${providerLink})\n\nPerformance:\n• Current Rate: ${stats.signatureRate.toFixed(2)}%\n• Signed: ${stats.signedBlocks}/${stats.totalBlocks} blocks`,
+      severity: AlertSeverity.INFO,
+      network: this.network,
+      timestamp: new Date(),
+      metadata: {
+        fpBtcPkHex: stats.fpBtcPkHex,
+        ownerAddress: stats.ownerAddress,
+        signatureRate: stats.signatureRate,
+        totalBlocks: stats.totalBlocks,
+        signedBlocks: stats.signedBlocks,
+        missedBlocks: stats.missedBlocks,
+        jailed: stats.jailed,
+        isActive: stats.isActive,
+        providerLink
+      }
+    };
+
+    await notificationManager.sendAlert(alert);
+    logger.info({
+      fpBtcPkHex: stats.fpBtcPkHex,
+      moniker: stats.moniker,
+      signatureRate: stats.signatureRate
+    }, 'Consecutive block signing recovery notification sent');
   }
 
   /**

@@ -100,7 +100,8 @@ export class NotificationService {
       // If we have recorded a previous alert and we haven't marked recovery yet,
       // or if we are already in recovery state but last alert was long enough ago
       const hasRecentLowRateAlert = alertState.lastAlertedSignatureRate && 
-                                   alertState.lastSignatureRateAlertTime;
+                                   alertState.lastSignatureRateAlertTime &&
+                                   alertState.lastAlertedSignatureRate < threshold;
       
       const timeSinceLastRecoveryAlert = alertState.lastRecoveryAlertTime ? 
         now.getTime() - alertState.lastRecoveryAlertTime.getTime() : 
@@ -121,6 +122,23 @@ export class NotificationService {
         await this.sendSignatureRateRecoveryAlert(stats);
         alertState.isRecovering = true;
         alertState.lastRecoveryAlertTime = now;
+        // Reset the last alerted rate to prevent recovery alerts from triggering again
+        // until a new alert condition is detected
+        alertState.lastAlertedSignatureRate = 0;
+      } else if (stats.signatureRate >= threshold && alertState.isRecovering) {
+        // If we're already in recovery state and signature rate is stable above threshold for a while,
+        // reset the recovery state to allow for new alerts in the future
+        if (timeSinceLastRecoveryAlert > this.MIN_ALERT_INTERVAL) {
+          logger.debug({ 
+            validatorAddress: stats.validatorAddress, 
+            signatureRate: stats.signatureRate,
+            isRecovering: alertState.isRecovering,
+            timeSinceLastRecovery: timeSinceLastRecoveryAlert
+          }, 'Resetting recovery state after stable performance');
+          
+          alertState.isRecovering = false;
+          alertState.lastAlertedSignatureRate = 0;
+        }
       }
     }
 
@@ -154,15 +172,22 @@ export class NotificationService {
   private async checkConsecutiveMissedBlocks(stats: ValidatorSignatureStats): Promise<void> {
     // Get alert state for this validator
     const alertState = this.getAlertState(stats.validatorAddress);
+    const now = new Date();
 
     // If 5 or more consecutive blocks missed and not yet alerted
     if (stats.consecutiveMissed >= 5 && !alertState.sentConsecutiveBlocksAlert) {
       await this.sendConsecutiveMissedBlocksAlert(stats);
       alertState.sentConsecutiveBlocksAlert = true;
-      alertState.lastCriticalAlertTime = new Date();
-    } else if (stats.consecutiveMissed === 0 && alertState.sentConsecutiveBlocksAlert) {
+      alertState.lastCriticalAlertTime = now;
+    } 
+    // If the validator was missing consecutive blocks but is now signing
+    else if (stats.consecutiveSigned >= 5 && alertState.sentConsecutiveBlocksAlert && 
+             stats.consecutiveMissed === 0) {
       // Reset the flag when no longer missing consecutive blocks
       alertState.sentConsecutiveBlocksAlert = false;
+      
+      // Send recovery notification
+      await this.sendConsecutiveSigningRecoveryAlert(stats);
     }
 
     // Update the alert state
@@ -291,10 +316,6 @@ Performance:
       previousRate,
       rateImprovement 
     }, 'Signature rate recovery alert sent');
-    
-    // Reset the lastAlertedSignatureRate to allow the cycle to repeat if necessary
-    alertState.lastAlertedSignatureRate = 0;
-    this.alertStates.set(stats.validatorAddress, alertState);
   }
 
   /**
@@ -479,5 +500,57 @@ Performance:
   clearAlertStates(): void {
     this.alertStates.clear();
     logger.debug('Validator alert states cleared');
+  }
+
+  /**
+   * Sends a recovery alert after validator starts signing consecutive blocks again
+   */
+  private async sendConsecutiveSigningRecoveryAlert(stats: ValidatorSignatureStats): Promise<void> {
+    // Make sure validator is defined before accessing properties
+    if (!stats.validator) {
+      logger.warn({ validatorAddress: stats.validatorAddress }, 'Cannot send alert: validator info not available');
+      return;
+    }
+    
+    const validatorLink = `https://testnet.babylon.hoodscan.io/validators/${stats.validator.operator_address}`;
+    
+    // Format the message with more information
+    const message = `Validator has recovered and is now signing blocks consecutively.
+
+Validator Details:
+• Name: ${stats.validator.moniker}
+• Address: ${stats.validatorAddress}
+• Status: ${stats.validator.status === 'BOND_STATUS_BONDED' ? '✅ Active' : '❌ Inactive'}
+• Explorer: [View on Hoodscan](${validatorLink})
+
+Performance:
+• Current Consecutive Signed: ${stats.consecutiveSigned}
+• Current Signature Rate: ${stats.signatureRate.toFixed(2)}%
+• Analyzed Blocks: ${stats.totalBlocksInWindow}`;
+    
+    const alertPayload: AlertPayload = {
+      title: `🔄 Block Signing Recovered | ${stats.validator.moniker}`,
+      message: message,
+      severity: AlertSeverity.INFO,
+      network: this.network,
+      timestamp: new Date(),
+      metadata: {
+        validatorAddress: stats.validatorAddress,
+        validatorOperatorAddress: stats.validator.operator_address,
+        validatorMoniker: stats.validator.moniker,
+        network: stats.network,
+        consecutiveSigned: stats.consecutiveSigned,
+        signatureRate: stats.signatureRate,
+        totalBlocksInWindow: stats.totalBlocksInWindow,
+        validatorLink
+      }
+    };
+
+    await notificationManager.sendAlert(alertPayload);
+    logger.info({ 
+      validatorAddress: stats.validatorAddress, 
+      consecutiveSigned: stats.consecutiveSigned,
+      signatureRate: stats.signatureRate
+    }, 'Consecutive block signing recovery alert sent');
   }
 }
