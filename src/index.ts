@@ -4,9 +4,9 @@ import mongodb from './database/mongodb';
 import notificationManager from './notifiers/notification-manager';
 import { BabylonClientImpl } from './clients/babylon-client';
 import { WebSocketManager } from './clients/websocket-manager';
-import { ValidatorSignatureService } from './services/validator-signature-service';
-import { FinalityProviderService } from './services/finality-provider-service';
-import { BLSSignatureService } from './services/bls-signature-service';
+import { ValidatorSignatureService } from './services/validator-signature';
+import { FinalityProviderService } from './services/finality-provider';
+import { BLSSignatureService } from './services/bls-signature';
 import { MonitoringService } from './services/monitoring-service.interface';
 import validatorInfoService from './services/validator-info-service';
 
