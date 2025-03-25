@@ -16,6 +16,10 @@ export interface MonitoringServiceOptions {
   // BLS signature options
   trackedAddresses?: string[];
   blockThreshold?: number;
+  
+  // Notification options
+  alertMinInterval?: number; // Minimum time between same type of alerts in milliseconds
+  signatureRateMinDrop?: number; // Minimum percentage drop required to trigger a new alert
 }
 
 export interface MonitoringService {

@@ -96,9 +96,12 @@ export class NotificationService {
    * Sends low signature rate notification
    */
   private async sendLowSignatureRateAlert(stats: FinalityProviderSignatureStats, rateStep: number): Promise<void> {
+    const providerName = stats.moniker || stats.fpBtcPkHex.substring(0, 8);
+    const providerLink = `https://testnet.babylon.hoodscan.io/staking/providers/${stats.fpBtcPkHex}`;
+    
     const alert: AlertPayload = {
-      title: `Finality Provider Low Signature Rate: ${stats.moniker || stats.fpBtcPkHex.substring(0, 8)}`,
-      message: `Finality Provider (${stats.moniker || stats.fpBtcPkHex.substring(0, 8)}) has a signature rate of ${stats.signatureRate.toFixed(2)}% for the last ${stats.totalBlocks} blocks. Signature rate dropped to ${rateStep}%. Threshold: ${this.options?.blockThreshold || 90}%`,
+      title: `📉 Low Signature Rate | ${providerName}`,
+      message: `Finality Provider signature rate has decreased to ${stats.signatureRate.toFixed(2)}%.\n\nProvider Details:\n• Name: ${providerName}\n• Owner: ${stats.ownerAddress}\n• Status: ${stats.jailed ? '🔒 Jailed' : (stats.isActive ? '✅ Active' : '❌ Inactive')}\n• Explorer: [View on Hoodscan](${providerLink})\n\nPerformance:\n• Signature Rate: ${stats.signatureRate.toFixed(2)}%\n• Step: ${rateStep}%\n• Signed: ${stats.signedBlocks}/${stats.totalBlocks} blocks\n• Threshold: ${this.options?.blockThreshold || 90}%`,
       severity: AlertSeverity.WARNING,
       network: this.network,
       timestamp: new Date(),
@@ -111,7 +114,8 @@ export class NotificationService {
         signedBlocks: stats.signedBlocks,
         missedBlocks: stats.missedBlocks,
         jailed: stats.jailed,
-        isActive: stats.isActive
+        isActive: stats.isActive,
+        providerLink
       }
     };
 
@@ -128,9 +132,12 @@ export class NotificationService {
    * Sends signature rate recovery notification
    */
   private async sendSignatureRateRecoveringAlert(stats: FinalityProviderSignatureStats): Promise<void> {
+    const providerName = stats.moniker || stats.fpBtcPkHex.substring(0, 8);
+    const providerLink = `https://testnet.babylon.hoodscan.io/staking/providers/${stats.fpBtcPkHex}`;
+    
     const alert: AlertPayload = {
-      title: `Finality Provider Signature Rate Recovering: ${stats.moniker || stats.fpBtcPkHex.substring(0, 8)}`,
-      message: `Finality Provider (${stats.moniker || stats.fpBtcPkHex.substring(0, 8)}) signature rate is recovering. Current rate: ${stats.signatureRate.toFixed(2)}%`,
+      title: `🔄 Signature Rate Recovering | ${providerName}`,
+      message: `Finality Provider signature rate is recovering.\n\nProvider Details:\n• Name: ${providerName}\n• Owner: ${stats.ownerAddress}\n• Status: ${stats.jailed ? '🔒 Jailed' : (stats.isActive ? '✅ Active' : '❌ Inactive')}\n• Explorer: [View on Hoodscan](${providerLink})\n\nPerformance:\n• Current Rate: ${stats.signatureRate.toFixed(2)}%\n• Signed: ${stats.signedBlocks}/${stats.totalBlocks} blocks`,
       severity: AlertSeverity.INFO,
       network: this.network,
       timestamp: new Date(),
@@ -142,7 +149,8 @@ export class NotificationService {
         signedBlocks: stats.signedBlocks,
         missedBlocks: stats.missedBlocks,
         jailed: stats.jailed,
-        isActive: stats.isActive
+        isActive: stats.isActive,
+        providerLink
       }
     };
 
@@ -158,9 +166,13 @@ export class NotificationService {
    * Sends recent block miss notification
    */
   private async sendRecentMissedBlocksAlert(stats: FinalityProviderSignatureStats, recentMissed: number): Promise<void> {
+    const providerName = stats.moniker || stats.fpBtcPkHex.substring(0, 8);
+    const providerLink = `https://testnet.babylon.hoodscan.io/staking/providers/${stats.fpBtcPkHex}`;
+    const missedHeights = stats.missedBlockHeights.slice(0, 5).join(', ');
+    
     const alert: AlertPayload = {
-      title: `Finality Provider Missing Signatures in Recent Blocks: ${stats.moniker || stats.fpBtcPkHex.substring(0, 8)}`,
-      message: `Finality Provider (${stats.moniker || stats.fpBtcPkHex.substring(0, 8)}) missed ${recentMissed} block signatures within the last 5 blocks. Please check the node status.`,
+      title: `⚠️ Recent Block Signatures Missed | ${providerName}`,
+      message: `Finality Provider missed ${recentMissed} block signatures in the last 5 blocks.\n\nProvider Details:\n• Name: ${providerName}\n• Owner: ${stats.ownerAddress}\n• Status: ${stats.jailed ? '🔒 Jailed' : (stats.isActive ? '✅ Active' : '❌ Inactive')}\n• Explorer: [View on Hoodscan](${providerLink})\n\nMissed Blocks:\n• Heights: ${missedHeights}\n• Overall Rate: ${stats.signatureRate.toFixed(2)}%\n\n⚠️ Please check the node status immediately.`,
       severity: AlertSeverity.CRITICAL,
       network: this.network,
       timestamp: new Date(),
@@ -171,7 +183,8 @@ export class NotificationService {
         signatureRate: stats.signatureRate,
         missedBlockHeights: stats.missedBlockHeights.slice(0, 5),
         jailed: stats.jailed,
-        isActive: stats.isActive
+        isActive: stats.isActive,
+        providerLink
       }
     };
 
@@ -187,11 +200,14 @@ export class NotificationService {
    * Sends jailed status change notification
    */
   async sendJailedStatusChangeAlert(fpInfo: FinalityProviderInfo, previousJailed: boolean, currentJailed: boolean): Promise<void> {
+    const providerName = fpInfo.moniker || fpInfo.fpBtcPkHex.substring(0, 8);
+    const providerLink = `https://testnet.babylon.hoodscan.io/staking/providers/${fpInfo.fpBtcPkHex}`;
+    
     // Changed from jailed to active
     if (previousJailed === true && currentJailed === false) {
       const alert: AlertPayload = {
-        title: `Finality Provider Became Active: ${fpInfo.moniker || fpInfo.fpBtcPkHex.substring(0, 8)}`,
-        message: `Finality Provider (${fpInfo.moniker || fpInfo.fpBtcPkHex.substring(0, 8)}) is no longer jailed and has become active.`,
+        title: `✅ Provider Status: Active | ${providerName}`,
+        message: `Finality Provider is now active and no longer jailed.\n\nProvider Details:\n• Name: ${providerName}\n• Owner: ${fpInfo.ownerAddress}\n• Status Change: 🔒 Jailed → ✅ Active\n• Explorer: [View on Hoodscan](${providerLink})`,
         severity: AlertSeverity.INFO,
         network: this.network,
         timestamp: new Date(),
@@ -199,7 +215,8 @@ export class NotificationService {
           fpBtcPkHex: fpInfo.fpBtcPkHex,
           ownerAddress: fpInfo.ownerAddress,
           previousStatus: 'jailed',
-          currentStatus: 'active'
+          currentStatus: 'active',
+          providerLink
         }
       };
 
@@ -212,8 +229,8 @@ export class NotificationService {
     // Changed from active to jailed
     else if (previousJailed === false && currentJailed === true) {
       const alert: AlertPayload = {
-        title: `Finality Provider Became Jailed: ${fpInfo.moniker || fpInfo.fpBtcPkHex.substring(0, 8)}`,
-        message: `Finality Provider (${fpInfo.moniker || fpInfo.fpBtcPkHex.substring(0, 8)}) has changed from active to jailed.`,
+        title: `🔒 Provider Status: Jailed | ${providerName}`,
+        message: `Finality Provider has been jailed.\n\nProvider Details:\n• Name: ${providerName}\n• Owner: ${fpInfo.ownerAddress}\n• Status Change: ✅ Active → 🔒 Jailed\n• Explorer: [View on Hoodscan](${providerLink})\n\n⚠️ Immediate action required to restore service.`,
         severity: AlertSeverity.CRITICAL,
         network: this.network,
         timestamp: new Date(),
@@ -221,7 +238,8 @@ export class NotificationService {
           fpBtcPkHex: fpInfo.fpBtcPkHex,
           ownerAddress: fpInfo.ownerAddress,
           previousStatus: 'active',
-          currentStatus: 'jailed'
+          currentStatus: 'jailed',
+          providerLink
         }
       };
 

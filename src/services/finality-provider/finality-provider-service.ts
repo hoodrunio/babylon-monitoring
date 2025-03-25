@@ -2,8 +2,6 @@ import { BabylonClient } from '../../clients/babylon-client.interface';
 import { MonitoringService, MonitoringServiceOptions } from '../monitoring-service.interface';
 import { Network } from '../../config/config';
 import logger from '../../utils/logger';
-import { FinalityProviderSignature } from '../../models/finality-provider-signature.model';
-import finalityProviderSignatureRepository from '../../database/repositories/finality-provider-signature.repository';
 import { ServiceConstants } from './types';
 import { FinalityProviderApiClient } from './api-client';
 import { CacheManager } from './cache-manager';
@@ -53,9 +51,6 @@ export class FinalityProviderService implements MonitoringService {
     logger.info(`Initializing FinalityProviderService for ${options.network} network`);
     
     try {
-      // Initialize repository
-      await finalityProviderSignatureRepository.initialize();
-      
       // Create sub-services
       this.initializeServices();
       
@@ -232,20 +227,9 @@ export class FinalityProviderService implements MonitoringService {
       // Determine signature status (whether signed or not)
       const signed = signers.has(fpBtcPkHex);
 
-      // Save signature data
-      const signature: FinalityProviderSignature = {
-        fpBtcPkHex,
-        blockHeight: height,
-        signed,
-        timestamp: new Date(),
-        network: this.getNetwork()
-      };
-
-      await finalityProviderSignatureRepository.saveSignature(signature);
-
       // Check tracking list
       if (this.statsManager!.shouldTrackProvider(fpBtcPkHex)) {
-        await this.statsManager!.updateFinalityProviderStats(fpBtcPkHex);
+        await this.statsManager!.updateFinalityProviderStatsWithSignature(fpBtcPkHex, height, signed);
       }
     }
   }

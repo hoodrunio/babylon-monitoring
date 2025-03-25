@@ -22,35 +22,10 @@ export class StatsManager {
    */
   async updateFinalityProviderStats(fpBtcPkHex: string): Promise<void> {
     try {
-      // Get recent signatures
-      const recentSignatures = await finalityProviderSignatureRepository.getRecentSignatures(
-        fpBtcPkHex,
-        this.network,
-        100 // Last 100 blocks
-      );
-
-      if (recentSignatures.length === 0) {
+      // Get current statistics
+      const stats = await finalityProviderSignatureRepository.getSignatureStats(fpBtcPkHex, this.network);
+      if (!stats) {
         return;
-      }
-
-      // Sort signatures (descending)
-      const sortedSignatures = recentSignatures.sort((a, b) => b.blockHeight - a.blockHeight);
-
-      // Determine the block range
-      const startHeight = sortedSignatures[sortedSignatures.length - 1].blockHeight;
-      const endHeight = sortedSignatures[0].blockHeight;
-
-      // Number of signatures
-      let signedBlocks = 0;
-      const missedBlockHeights: number[] = [];
-
-      // Count signatures
-      for (const sig of sortedSignatures) {
-        if (sig.signed) {
-          signedBlocks++;
-        } else {
-          missedBlockHeights.push(sig.blockHeight);
-        }
       }
 
       // Get provider info
@@ -59,27 +34,16 @@ export class StatsManager {
       // Check if active
       const isActive = this.activeProviders.has(fpBtcPkHex);
 
-      // Create statistics
-      const stats: FinalityProviderSignatureStats = {
-        fpBtcPkHex,
-        moniker: fpInfo?.moniker,
-        fpBtcAddress: fpInfo?.fpBtcAddress,
-        ownerAddress: fpInfo?.ownerAddress,
-        description: fpInfo?.description,
-        startHeight,
-        endHeight,
-        totalBlocks: sortedSignatures.length,
-        signedBlocks,
-        missedBlocks: sortedSignatures.length - signedBlocks,
-        signatureRate: (signedBlocks / sortedSignatures.length) * 100,
-        network: this.network,
-        lastUpdated: new Date(),
-        missedBlockHeights,
-        jailed: fpInfo?.jailed,
-        isActive
-      };
+      // Update provider information
+      stats.moniker = fpInfo?.moniker;
+      stats.fpBtcAddress = fpInfo?.fpBtcAddress;
+      stats.ownerAddress = fpInfo?.ownerAddress;
+      stats.description = fpInfo?.description;
+      stats.jailed = fpInfo?.jailed;
+      stats.isActive = isActive;
+      stats.lastUpdated = new Date();
 
-      // Save statistics
+      // Save updated statistics
       await finalityProviderSignatureRepository.saveSignatureStats(stats);
 
       // Notification checks
@@ -87,10 +51,10 @@ export class StatsManager {
         // Check signature rate
         await this.notificationService.checkAndSendSignatureRateAlert(stats);
 
-        // If more than one block is missed in the last 5 blocks
-        const recentMissed = sortedSignatures.slice(0, 5).filter(s => !s.signed).length;
-        if (recentMissed >= 3) {
-          await this.notificationService.checkAndSendRecentMissedBlocksAlert(stats, recentMissed);
+        // Get recent missed blocks count from stored missedBlockHeights
+        const recentMissedCount = stats.missedBlockHeights.filter(h => h >= stats.endHeight - 5).length;
+        if (recentMissedCount >= 3) {
+          await this.notificationService.checkAndSendRecentMissedBlocksAlert(stats, recentMissedCount);
         }
       }
     } catch (error) {
@@ -169,5 +133,92 @@ export class StatsManager {
     }
     // Otherwise track all
     return true;
+  }
+
+  /**
+   * Updates the statistics of a finality provider with a new signature
+   */
+  async updateFinalityProviderStatsWithSignature(fpBtcPkHex: string, height: number, signed: boolean): Promise<void> {
+    try {
+      // Get current statistics
+      let stats = await finalityProviderSignatureRepository.getSignatureStats(fpBtcPkHex, this.network);
+      
+      // Get provider info
+      const fpInfo = this.providerInfoMap.get(fpBtcPkHex);
+      
+      // Check if active
+      const isActive = this.activeProviders.has(fpBtcPkHex);
+      
+      if (!stats) {
+        // Create new statistics if none exist
+        stats = {
+          fpBtcPkHex,
+          moniker: fpInfo?.moniker,
+          fpBtcAddress: fpInfo?.fpBtcAddress,
+          ownerAddress: fpInfo?.ownerAddress,
+          description: fpInfo?.description,
+          startHeight: height,
+          endHeight: height,
+          totalBlocks: 1,
+          signedBlocks: signed ? 1 : 0,
+          missedBlocks: signed ? 0 : 1,
+          signatureRate: signed ? 100 : 0,
+          network: this.network,
+          lastUpdated: new Date(),
+          missedBlockHeights: signed ? [] : [height],
+          jailed: fpInfo?.jailed,
+          isActive
+        };
+      } else {
+        // Update existing statistics
+        stats.totalBlocks += 1;
+        
+        if (signed) {
+          stats.signedBlocks += 1;
+        } else {
+          stats.missedBlocks += 1;
+          stats.missedBlockHeights.push(height);
+          
+          // Keep only the most recent missed block heights (up to 100)
+          if (stats.missedBlockHeights.length > 100) {
+            stats.missedBlockHeights = stats.missedBlockHeights.slice(-100);
+          }
+        }
+        
+        // Update height range
+        stats.startHeight = Math.min(stats.startHeight, height);
+        stats.endHeight = Math.max(stats.endHeight, height);
+        
+        // Recalculate signature rate
+        stats.signatureRate = (stats.signedBlocks / stats.totalBlocks) * 100;
+        
+        // Update provider info
+        stats.moniker = fpInfo?.moniker;
+        stats.fpBtcAddress = fpInfo?.fpBtcAddress;
+        stats.ownerAddress = fpInfo?.ownerAddress;
+        stats.description = fpInfo?.description;
+        stats.jailed = fpInfo?.jailed;
+        stats.isActive = isActive;
+        stats.lastUpdated = new Date();
+      }
+      
+      // Save updated statistics
+      await finalityProviderSignatureRepository.saveSignatureStats(stats);
+      
+      // Notification checks
+      if (this.shouldSendAlert(fpBtcPkHex)) {
+        // Check signature rate
+        await this.notificationService.checkAndSendSignatureRateAlert(stats);
+        
+        // Get recent missed blocks count - this requires a different implementation
+        // since we no longer have the full history in the database
+        const recentMissedCount = stats.missedBlockHeights.filter(h => h >= height - 5).length;
+        if (recentMissedCount >= 3) {
+          await this.notificationService.checkAndSendRecentMissedBlocksAlert(stats, recentMissedCount);
+        }
+      }
+    } catch (error) {
+      logger.error({ error, fpBtcPkHex, height }, 'Error updating finality provider statistics with signature');
+    }
   }
 }

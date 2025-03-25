@@ -87,8 +87,16 @@ export class SyncManager {
    */
   private async findLastSyncedBlock(): Promise<number> {
     try {
-      const lastSignature = await finalityProviderSignatureRepository.getLastProcessedHeight(this.network);
-      return lastSignature || 0;
+      // Query signature stats instead of individual signatures
+      const allStats = await finalityProviderSignatureRepository.getAllSignatureStats(this.network);
+      
+      if (allStats.length === 0) {
+        return 0;
+      }
+      
+      // Find maximum endHeight among all providers
+      const maxEndHeight = Math.max(...allStats.map(stat => stat.endHeight));
+      return maxEndHeight;
     } catch (error) {
       logger.error({ error }, `Error finding last processed block (${this.network})`);
       return 0;

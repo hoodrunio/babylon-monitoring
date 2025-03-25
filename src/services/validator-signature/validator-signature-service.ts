@@ -9,6 +9,7 @@ import { BlockProcessor } from './block-processor';
 import { ValidatorManager } from './validator-manager';
 import { StatsManager } from './stats-manager';
 import { NotificationService } from './notification-service';
+import validatorInfoService from '../../services/validator-info-service';
 
 /**
  * Validator signature monitoring service
@@ -16,7 +17,7 @@ import { NotificationService } from './notification-service';
 export class ValidatorSignatureService implements MonitoringService {
   private client: BabylonClient | null = null;
   private options: MonitoringServiceOptions | null = null;
-  
+
   // Sub-services
   private apiClient: ValidatorApiClient | null = null;
   private cacheManager: CacheManager | null = null;
@@ -24,7 +25,7 @@ export class ValidatorSignatureService implements MonitoringService {
   private validatorManager: ValidatorManager | null = null;
   private statsManager: StatsManager | null = null;
   private notificationService: NotificationService | null = null;
-  
+
   // Constants
   private readonly constants: ServiceConstants = {
     BLOCK_ID_FLAG_COMMIT: 2,
@@ -52,20 +53,20 @@ export class ValidatorSignatureService implements MonitoringService {
     }
 
     logger.info(`Initializing ValidatorSignatureService for ${options.network} network`);
-    
+
     try {
       // Initialize services
       this.initializeServices();
-      
+
       // Load validator information
       await this.validatorManager!.loadValidatorInfo();
-      
+
       // Initial jailed status check
       await this.checkValidatorJailedStatus();
-      
+
       // Initial active/inactive status check
       await this.checkValidatorActiveStatus();
-      
+
       logger.info(`ValidatorSignatureService initialized for ${options.network} network`);
     } catch (error) {
       logger.error({ error }, `ValidatorSignatureService initialization error (${options.network})`);
@@ -79,19 +80,19 @@ export class ValidatorSignatureService implements MonitoringService {
   private initializeServices(): void {
     // API client
     this.apiClient = new ValidatorApiClient(this.client!);
-    
+
     // Cache manager
     this.cacheManager = new CacheManager(this.constants);
-    
+
     // Notification service
     this.notificationService = new NotificationService(
       this.getNetwork(),
       this.options!
     );
-    
+
     // Validator manager
     this.validatorManager = new ValidatorManager(this.getNetwork());
-    
+
     // Stats manager
     this.statsManager = new StatsManager(
       this.getNetwork(),
@@ -99,7 +100,7 @@ export class ValidatorSignatureService implements MonitoringService {
       this.notificationService,
       this.constants
     );
-    
+
     // Block processor
     this.blockProcessor = new BlockProcessor(
       this.apiClient,
@@ -112,19 +113,19 @@ export class ValidatorSignatureService implements MonitoringService {
 
   async start(): Promise<void> {
     if (!this.isEnabled()) return;
-    
+
     // Periodically check validator jailed status
     this.validatorJailedCheckInterval = setInterval(
       this.checkValidatorJailedStatus.bind(this),
       this.JAILED_CHECK_INTERVAL
     );
-    
+
     // Periodically check validator active/inactive status
     this.validatorStatusCheckInterval = setInterval(
       this.checkValidatorActiveStatus.bind(this),
       this.STATUS_CHECK_INTERVAL
     );
-    
+
     logger.info(`ValidatorSignatureService started for ${this.getNetwork()} network`);
   }
 
@@ -134,13 +135,13 @@ export class ValidatorSignatureService implements MonitoringService {
       clearInterval(this.validatorJailedCheckInterval);
       this.validatorJailedCheckInterval = null;
     }
-    
+
     // Stop active/inactive status check
     if (this.validatorStatusCheckInterval) {
       clearInterval(this.validatorStatusCheckInterval);
       this.validatorStatusCheckInterval = null;
     }
-    
+
     logger.info(`ValidatorSignatureService stopped for ${this.getNetwork()} network`);
   }
 
@@ -149,36 +150,38 @@ export class ValidatorSignatureService implements MonitoringService {
    */
   private async checkValidatorJailedStatus(): Promise<void> {
     if (!this.isEnabled() || !this.apiClient) return;
-    
+
     try {
       const validators = await this.apiClient.getAllValidators();
-      
+
       // Check all validators
       for (const validator of validators) {
         const isJailed = validator.jailed === true;
         const operatorAddress = validator.operator_address;
-        
+
         // Compare with previous status
         const wasJailed = this.validatorJailedStatus.get(operatorAddress) || false;
-        
+
         // If the status has changed
         if (isJailed !== wasJailed) {
           // Send a notification if jailed
           if (isJailed) {
             await this.notificationService?.sendValidatorJailedAlert(
               operatorAddress,
-              validator.description?.moniker || operatorAddress
+              validator.description?.moniker || operatorAddress,
+              operatorAddress
             );
             logger.info(`Validator jailed: ${operatorAddress} (${validator.description?.moniker || 'unknown'})`);
           } else {
             await this.notificationService?.sendValidatorUnjailedAlert(
               operatorAddress,
-              validator.description?.moniker || operatorAddress
+              validator.description?.moniker || operatorAddress,
+              operatorAddress
             );
             logger.info(`Validator unjailed: ${operatorAddress} (${validator.description?.moniker || 'unknown'})`);
           }
         }
-        
+
         // Update status
         this.validatorJailedStatus.set(operatorAddress, isJailed);
       }
@@ -192,33 +195,42 @@ export class ValidatorSignatureService implements MonitoringService {
    */
   private async checkValidatorActiveStatus(): Promise<void> {
     if (!this.isEnabled() || !this.apiClient) return;
-    
+
     try {
       const validators = await this.apiClient.getAllValidators();
-      
+
       // Check all validators
       for (const validator of validators) {
         const status = validator.status;
         const operatorAddress = validator.operator_address;
         const moniker = validator.description?.moniker || operatorAddress;
-        
+
         // Compare with previous status
         const previousStatus = this.validatorActiveStatus.get(operatorAddress) || '';
-        
+
         // If the status has changed
         if (status !== previousStatus && previousStatus !== '') {
           // If active (BOND_STATUS_BONDED)
           if (status === 'BOND_STATUS_BONDED') {
-            await this.notificationService?.sendValidatorActiveAlert(operatorAddress, moniker);
+            await this.notificationService?.sendValidatorActiveAlert(
+              operatorAddress,
+              moniker,
+              operatorAddress
+            );
             logger.info(`Validator is now active: ${operatorAddress} (${moniker})`);
-          } 
+          }
           // If inactive (BOND_STATUS_UNBONDING or BOND_STATUS_UNBONDED)
           else if (previousStatus === 'BOND_STATUS_BONDED') {
-            await this.notificationService?.sendValidatorInactiveAlert(operatorAddress, moniker, status);
+            await this.notificationService?.sendValidatorInactiveAlert(
+              operatorAddress,
+              moniker,
+              status,
+              operatorAddress
+            );
             logger.info(`Validator is now inactive: ${operatorAddress} (${moniker}) - Status: ${status}`);
           }
         }
-        
+
         // Update status
         this.validatorActiveStatus.set(operatorAddress, status);
       }
@@ -251,23 +263,49 @@ export class ValidatorSignatureService implements MonitoringService {
    */
   private async onBlockProcessed(height: number, signers: Set<string>, timestamp: Date, round: number): Promise<void> {
     if (!this.isEnabled() || !this.validatorManager) return;
-    
+
     try {
       // Get all active validators
       const allValidators = await this.validatorManager.getAllValidators();
-      
+
       // For each validator, check if they signed and update
       for (const validator of allValidators) {
         if (!validator.operator_address) continue;
-        
+
         // Check if the validator is active (bonded)
         const isActive = validator.status === 'BOND_STATUS_BONDED';
-        
+
         // Update signatures of active validators, skip inactive ones
         if (isActive) {
           // Did it sign?
-          const hasSigned = signers.has(validator.operator_address);
-          
+          let hasSigned = false;
+
+          // Validator's hex consensus addresses can be found in alternative addresses
+          if (validator.alternative_addresses && validator.alternative_addresses.hex) {
+            for (const hexAddress of validator.alternative_addresses.hex) {
+              if (signers.has(hexAddress)) {
+                hasSigned = true;
+                break;
+              }
+            }
+          }
+
+          // Check directly with signers.has (to check the different format of addresses)
+          for (const signerAddress of signers) {
+            // Direct match first
+            if (validator.operator_address === signerAddress) {
+              hasSigned = true;
+              break;
+            }
+
+            // Check if this signer corresponds to our validator
+            const validatorInfo = await validatorInfoService.getValidatorByAnyAddress(signerAddress);
+            if (validatorInfo && validatorInfo.operator_address === validator.operator_address) {
+              hasSigned = true;
+              break;
+            }
+          }
+
           await this.statsManager!.updateValidatorSignature(
             validator,
             height,

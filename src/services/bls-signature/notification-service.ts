@@ -50,9 +50,11 @@ export class NotificationService {
    * Sends an alert for a missed BLS signature
    */
   private async sendMissedBLSSignatureAlert(signature: BLSValidatorSignature): Promise<void> {
+    const validatorLink = `https://testnet.babylon.hoodscan.io/validators/${signature.validatorOperatorAddress}`;
+    
     const alert: AlertPayload = {
-      title: `Validator Missed BLS Signature: ${signature.validatorMoniker}`,
-      message: `Validator ${signature.validatorMoniker} (${signature.validatorOperatorAddress}) BLS checkpoint signature not found for Epoch ${signature.epochNum}.`,
+      title: `⚠️ BLS Signature Missing | ${signature.validatorMoniker}`,
+      message: `Validator ${signature.validatorMoniker} missed BLS checkpoint signature for Epoch ${signature.epochNum}.\n\nValidator Details:\n• Address: ${signature.validatorOperatorAddress}\n• Power: ${signature.validatorPower}\n• Explorer: [View on Hoodscan](${validatorLink})`,
       severity: AlertSeverity.CRITICAL,
       network: this.network,
       timestamp: new Date(),
@@ -61,7 +63,8 @@ export class NotificationService {
         validatorMoniker: signature.validatorMoniker,
         operatorAddress: signature.validatorOperatorAddress,
         epoch: signature.epochNum,
-        power: signature.validatorPower
+        power: signature.validatorPower,
+        validatorLink
       }
     };
     
@@ -78,9 +81,11 @@ export class NotificationService {
    * Sends an alert for low checkpoint participation rate
    */
   private async sendLowParticipationAlert(stats: BLSCheckpointStats): Promise<void> {
+    const activeValidators = stats.totalValidators - Math.floor((parseInt(stats.totalPower) - parseInt(stats.signedPower)) / parseInt(stats.totalPower) * stats.totalValidators);
+    
     const alert: AlertPayload = {
-      title: `Low BLS Checkpoint Participation Rate: Epoch ${stats.epochNum}`,
-      message: `Low BLS checkpoint participation rate for Epoch ${stats.epochNum}. By Power: ${stats.participationRateByPower}, By Validator Count: ${stats.participationRateByCount}`,
+      title: `🔍 Low BLS Checkpoint Participation | Epoch ${stats.epochNum}`,
+      message: `Low participation detected in BLS checkpoint for Epoch ${stats.epochNum}.\n\nParticipation Stats:\n• By Power: ${stats.participationRateByPower}\n• By Validator Count: ${stats.participationRateByCount}\n• Signed Power: ${stats.signedPower}/${stats.totalPower}\n• Active Validators: ${activeValidators}/${stats.totalValidators}`,
       severity: AlertSeverity.WARNING,
       network: this.network,
       timestamp: new Date(),

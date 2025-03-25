@@ -1,13 +1,5 @@
 import { Network } from '../config/config';
 
-export interface FinalityProviderSignature {
-  fpBtcPkHex: string;
-  blockHeight: number;
-  signed: boolean;
-  timestamp: Date;
-  network: Network;
-}
-
 export interface FinalityProviderInfo {
   fpBtcPkHex: string;
   fpBtcAddress?: string;

@@ -53,6 +53,8 @@ export interface ValidatorAlertState {
   lastAlertedSignatureRate: number;
   isRecovering: boolean;
   lastCriticalAlertTime?: Date;
+  lastSignatureRateAlertTime?: Date;
+  lastRecoveryAlertTime?: Date;
   sentConsecutiveBlocksAlert: boolean;
   sentUptimeAlert: boolean;
 }
